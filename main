@@ -1,0 +1,441 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Claude配置文件管理器
+支持多配置管理、一键切换、命令行界面
+"""
+
+import os
+import json
+import shutil
+from pathlib import Path
+import tempfile
+from datetime import datetime
+from typing import Dict, List, Optional
+import sys
+
+
+class ClaudeConfigManager:
+    def __init__(self):
+        # 配置文件路径
+        self.claude_dir = Path.home() / ".claude"
+        self.settings_file = self.claude_dir / "settings.json"
+        self.config_storage = Path(__file__).parent / "claude_configs.json"
+
+        # 配置数据
+        self.configs = {}
+        self.current_config_name = None
+
+        # 初始化
+        self.init_directories()
+        self.load_configs()
+        self.detect_current_config()
+        
+    def init_directories(self):
+        """初始化必要的目录"""
+        try:
+            self.claude_dir.mkdir(exist_ok=True)
+            if not self.settings_file.exists():
+                # 创建默认配置文件
+                default_config = {
+                    "api_key": "",
+                    "model": "claude-3-sonnet-20240229",
+                    "max_tokens": 4096
+                }
+                with open(self.settings_file, 'w', encoding='utf-8') as f:
+                    json.dump(default_config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"❌ 初始化目录失败: {str(e)}")
+            sys.exit(1)
+
+    def load_configs(self):
+        """加载保存的配置"""
+        try:
+            if self.config_storage.exists():
+                with open(self.config_storage, 'r', encoding='utf-8') as f:
+                    self.configs = json.load(f)
+            else:
+                self.configs = {}
+
+            # 如果没有配置，从当前settings.json创建默认配置
+            if not self.configs and self.settings_file.exists():
+                with open(self.settings_file, 'r', encoding='utf-8') as f:
+                    current_config = json.load(f)
+                self.configs["默认配置"] = current_config
+                self.save_configs()
+
+        except Exception as e:
+            print(f"❌ 加载配置失败: {str(e)}")
+            self.configs = {}
+
+    def save_configs(self):
+        """保存配置到本地文件"""
+        try:
+            with open(self.config_storage, 'w', encoding='utf-8') as f:
+                json.dump(self.configs, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            print(f"❌ 保存配置失败: {str(e)}")
+
+    def refresh_configs(self):
+        """刷新配置数据，重新从文件加载最新配置"""
+        try:
+            if self.config_storage.exists():
+                with open(self.config_storage, 'r', encoding='utf-8') as f:
+                    self.configs = json.load(f)
+                print("🔄 已加载最新配置数据")
+            else:
+                self.configs = {}
+                print("⚠️ 配置文件不存在，使用空配置")
+        except Exception as e:
+            print(f"❌ 刷新配置失败: {str(e)}")
+            print("🔄 保持使用当前配置数据")
+    
+    def list_configs(self):
+        """列出所有配置"""
+        # 每次列出配置前先刷新数据
+        self.refresh_configs()
+        
+        if not self.configs:
+            print("📋 暂无保存的配置")
+            return
+
+        print("\n📋 配置列表:")
+        print("-" * 50)
+        for i, (name, config) in enumerate(self.configs.items(), 1):
+            current_marker = " ✅ (当前使用)" if name == self.current_config_name else ""
+            print(f"{i}. {name}{current_marker}")
+        print("-" * 50)
+    
+    def detect_current_config(self):
+        """检测当前使用的配置"""
+        try:
+            if not self.settings_file.exists():
+                self.current_config_name = None
+                return
+
+            with open(self.settings_file, 'r', encoding='utf-8') as f:
+                current_settings = json.load(f)
+
+            # 比较当前配置与保存的配置
+            for name, config in self.configs.items():
+                if config == current_settings:
+                    self.current_config_name = name
+                    return
+
+            self.current_config_name = None
+
+        except Exception as e:
+            print(f"❌ 检测当前配置失败: {str(e)}")
+
+    def show_config_content(self, config_name):
+        """显示配置内容"""
+        if config_name in self.configs:
+            print(f"\n📄 配置 '{config_name}' 的内容:")
+            print("-" * 50)
+            config_content = json.dumps(self.configs[config_name], indent=2, ensure_ascii=False)
+            print(config_content)
+            print("-" * 50)
+            if config_name == self.current_config_name:
+                print("✅ 这是当前使用的配置")
+        else:
+            print(f"❌ 配置 '{config_name}' 不存在")
+
+    def add_config(self):
+        """添加新配置"""
+        print("\n➕ 添加新配置")
+        name = input("请输入配置名称: ").strip()
+        if not name:
+            print("❌ 配置名称不能为空")
+            return
+
+        if name in self.configs:
+            print("❌ 配置名称已存在!")
+            return
+
+        # 创建配置
+        self.edit_config_interactive(name, {})
+
+    def edit_config_interactive(self, config_name, config_data):
+        """交互式编辑配置"""
+        print(f"\n✏️ 编辑配置: {config_name}")
+        print("请输入配置项 (留空使用默认值):")
+
+        # 获取当前配置或默认值
+        api_key = config_data.get("api_key", "")
+        model = config_data.get("model", "claude-3-sonnet-20240229")
+        max_tokens = config_data.get("max_tokens", 4096)
+
+        # 交互式输入
+        new_api_key = input(f"API Key [{api_key}]: ").strip()
+        if new_api_key:
+            api_key = new_api_key
+
+        new_model = input(f"Model [{model}]: ").strip()
+        if new_model:
+            model = new_model
+
+        try:
+            new_max_tokens = input(f"Max Tokens [{max_tokens}]: ").strip()
+            if new_max_tokens:
+                max_tokens = int(new_max_tokens)
+        except ValueError:
+            print("❌ Max Tokens 必须是数字，使用默认值")
+
+        # 保存配置
+        new_config = {
+            "api_key": api_key,
+            "model": model,
+            "max_tokens": max_tokens
+        }
+
+        self.configs[config_name] = new_config
+        self.save_configs()
+        print(f"✅ 配置 '{config_name}' 已保存")
+    
+    def edit_config(self):
+        """编辑配置"""
+        # 编辑前先刷新配置数据
+        self.refresh_configs()
+        
+        if not self.configs:
+            print("❌ 暂无配置可编辑")
+            return
+
+        self.list_configs()
+        try:
+            choice = input("\n请选择要编辑的配置编号: ").strip()
+            if not choice.isdigit():
+                print("❌ 请输入有效的数字")
+                return
+
+            index = int(choice) - 1
+            config_names = list(self.configs.keys())
+
+            if 0 <= index < len(config_names):
+                config_name = config_names[index]
+                self.edit_config_interactive(config_name, self.configs[config_name].copy())
+            else:
+                print("❌ 无效的选择")
+        except ValueError:
+            print("❌ 请输入有效的数字")
+
+    def delete_config(self):
+        """删除配置"""
+        # 删除前先刷新配置数据
+        self.refresh_configs()
+        
+        if not self.configs:
+            print("❌ 暂无配置可删除")
+            return
+
+        if len(self.configs) <= 1:
+            print("❌ 至少需要保留一个配置!")
+            return
+
+        self.list_configs()
+        try:
+            choice = input("\n请选择要删除的配置编号: ").strip()
+            if not choice.isdigit():
+                print("❌ 请输入有效的数字")
+                return
+
+            index = int(choice) - 1
+            config_names = list(self.configs.keys())
+
+            if 0 <= index < len(config_names):
+                config_name = config_names[index]
+                confirm = input(f"确定要删除配置 '{config_name}' 吗? (y/N): ").strip().lower()
+                if confirm in ['y', 'yes']:
+                    del self.configs[config_name]
+                    self.save_configs()
+                    print(f"✅ 配置 '{config_name}' 已删除")
+                    # 如果删除的是当前配置，重新检测
+                    if config_name == self.current_config_name:
+                        self.detect_current_config()
+                else:
+                    print("❌ 取消删除")
+            else:
+                print("❌ 无效的选择")
+        except ValueError:
+            print("❌ 请输入有效的数字")
+    
+    def apply_config(self):
+        """应用配置到settings.json"""
+        # 应用前先刷新配置数据
+        self.refresh_configs()
+        
+        if not self.configs:
+            print("❌ 暂无配置可应用")
+            return
+
+        self.list_configs()
+        try:
+            choice = input("\n请选择要应用的配置编号: ").strip()
+            if not choice.isdigit():
+                print("❌ 请输入有效的数字")
+                return
+
+            index = int(choice) - 1
+            config_names = list(self.configs.keys())
+
+            if 0 <= index < len(config_names):
+                config_name = config_names[index]
+
+                confirm = input(f"确定要应用配置 '{config_name}' 吗? 这将替换当前的settings.json文件 (y/N): ").strip().lower()
+                if confirm not in ['y', 'yes']:
+                    print("❌ 取消应用")
+                    return
+
+                try:
+                    # 创建备份
+                    self.create_backup()
+
+                    # 原子性写入配置
+                    config_data = self.configs[config_name]
+                    temp_file = None
+
+                    try:
+                        # 使用临时文件确保原子性操作
+                        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8',
+                                                       dir=self.claude_dir, delete=False) as f:
+                            json.dump(config_data, f, indent=2, ensure_ascii=False)
+                            temp_file = f.name
+
+                        # 原子性替换
+                        shutil.move(temp_file, self.settings_file)
+                        temp_file = None
+
+                        self.current_config_name = config_name
+                        print(f"✅ 配置 '{config_name}' 已成功应用到Claude!")
+
+                    finally:
+                        # 清理临时文件
+                        if temp_file and os.path.exists(temp_file):
+                            os.unlink(temp_file)
+
+                except Exception as e:
+                    print(f"❌ 应用配置失败: {str(e)}")
+            else:
+                print("❌ 无效的选择")
+        except ValueError:
+            print("❌ 请输入有效的数字")
+    
+    def create_backup(self):
+        """创建settings.json的备份"""
+        if not self.settings_file.exists():
+            return
+
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            backup_file = self.claude_dir / f"settings_backup_{timestamp}.json"
+            shutil.copy2(self.settings_file, backup_file)
+            print(f"📁 已创建备份: {backup_file.name}")
+
+            # 只保留最近10个备份
+            backup_files = list(self.claude_dir.glob("settings_backup_*.json"))
+            if len(backup_files) > 10:
+                backup_files.sort(key=lambda x: x.stat().st_mtime)
+                for old_backup in backup_files[:-10]:
+                    old_backup.unlink()
+
+        except Exception as e:
+            print(f"❌ 创建备份失败: {str(e)}")
+
+    def show_menu(self):
+        """显示主菜单"""
+        print("\n" + "="*60)
+        print("🔧 Claude配置文件管理器")
+        print("="*60)
+        print("1. 列出所有配置")
+        print("2. 查看配置内容")
+        print("3. 添加新配置")
+        print("4. 编辑配置")
+        print("5. 删除配置")
+        print("6. 应用配置")
+        print("7. 显示当前配置")
+        print("0. 退出")
+        print("="*60)
+
+    def show_current_config(self):
+        """显示当前使用的配置"""
+        if self.current_config_name:
+            print(f"\n✅ 当前使用的配置: {self.current_config_name}")
+            self.show_config_content(self.current_config_name)
+        else:
+            print("\n❓ 当前配置未匹配任何保存的配置")
+            if self.settings_file.exists():
+                try:
+                    with open(self.settings_file, 'r', encoding='utf-8') as f:
+                        current_settings = json.load(f)
+                    print("当前 settings.json 内容:")
+                    print("-" * 50)
+                    print(json.dumps(current_settings, indent=2, ensure_ascii=False))
+                    print("-" * 50)
+                except Exception as e:
+                    print(f"❌ 读取当前配置失败: {str(e)}")
+
+    def run(self):
+        """运行命令行界面"""
+        while True:
+            self.show_menu()
+            choice = input("\n请选择操作 (0-7): ").strip()
+
+            if choice == "0":
+                print("👋 再见!")
+                break
+            elif choice == "1":
+                self.list_configs()
+            elif choice == "2":
+                # 查看配置前先刷新数据
+                self.refresh_configs()
+                if not self.configs:
+                    print("❌ 暂无配置")
+                    continue
+                self.list_configs()
+                try:
+                    config_choice = input("\n请选择要查看的配置编号: ").strip()
+                    if config_choice.isdigit():
+                        index = int(config_choice) - 1
+                        config_names = list(self.configs.keys())
+                        if 0 <= index < len(config_names):
+                            self.show_config_content(config_names[index])
+                        else:
+                            print("❌ 无效的选择")
+                    else:
+                        print("❌ 请输入有效的数字")
+                except ValueError:
+                    print("❌ 请输入有效的数字")
+            elif choice == "3":
+                self.add_config()
+            elif choice == "4":
+                self.edit_config()
+            elif choice == "5":
+                self.delete_config()
+            elif choice == "6":
+                self.apply_config()
+            elif choice == "7":
+                self.show_current_config()
+            else:
+                print("❌ 无效的选择，请重新输入")
+
+            if choice != "0":
+                input("\n按回车键继续...")
+                # 重新刷新配置并检测当前配置
+                self.refresh_configs()
+                self.detect_current_config()
+
+
+def main():
+    """主函数"""
+    try:
+        app = ClaudeConfigManager()
+        app.run()
+    except KeyboardInterrupt:
+        print("\n\n👋 用户中断，程序退出")
+    except Exception as e:
+        print(f"❌ 应用启动失败: {str(e)}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
